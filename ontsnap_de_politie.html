@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ontsnap de Politie</title>
+  <style>
+    body { display: flex; flex-direction: column; align-items: center; font-family: Arial, sans-serif; }
+    #gameBoard { display: grid; grid-template-columns: repeat(10, 50px); grid-template-rows: repeat(10, 50px); gap: 5px; }
+    .cell { 
+      width: 50px; 
+      height: 50px; 
+      display: flex; 
+      justify-content: center; 
+      align-items: center; 
+      font-size: 24px; 
+      border: 1px solid #ccc;
+    }
+    .wall { background-color: #333; }
+    .cell:nth-child(odd) { background-color: #d9d9d9; } /* Keukenvloer effect */
+    .fire { background-color: red; color: white; }
+    #status { text-align: center; margin-top: 20px; font-size: 20px; }
+    #retryButton { display: none; margin-top: 20px; padding: 10px 20px; font-size: 16px; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+<div>
+  <div id="gameBoard"></div>
+  <div id="status">Gebruik de pijltjestoetsen om te bewegen en ontsnap de politie!</div>
+  <button id="retryButton" onclick="resetGame()">Probeer opnieuw</button>
+</div>
+
+<script>
+  const boardSize = 10;
+  const playerEmoji = "🟠";
+  const policeEmoji = "👮";
+  const wallEmoji = "🧱";
+  const exitEmoji = "🚪";
+  const bulletEmoji = "🔸";
+  const fireEmoji = "🔥";
+  const moveDelay = 250; // ms voor spelerbewegingen
+
+  let playerPosition, policePositions, exitPosition, wallPositions, firePositions, isFrozen, bulletActive, bulletCooldown, gameOver;
+  let fireTimerStarted = false;
+
+  // Start het spel opnieuw en stel alle posities terug
+  function resetGame() {
+    playerPosition = { x: 0, y: 0 };
+    exitPosition = { x: boardSize - 1, y: boardSize - 1 };
+    isFrozen = false;
+    bulletActive = false;
+    bulletCooldown = false;
+    gameOver = false;
+    firePositions = [];
+    wallPositions = generateWalls();
+    policePositions = spawnPolice();
+    document.getElementById("status").textContent = "Gebruik de pijltjestoetsen om te bewegen en ontsnap de politie!";
+    document.getElementById("retryButton").style.display = "none";
+    createBoard();
+    document.addEventListener("keydown", handleKeydown);
+    startFireTimer();
+  }
+
+  function createBoard() {
+    const gameBoard = document.getElementById("gameBoard");
+    gameBoard.innerHTML = "";
+    for (let y = 0; y < boardSize; y++) {
+      for (let x = 0; x < boardSize; x++) {
+        const cell = document.createElement("div");
+        cell.classList.add("cell");
+        
+        // Voeg het juiste symbool toe aan de cel
+        if (x === playerPosition.x && y === playerPosition.y) {
+          cell.textContent = playerEmoji;
+        } else if (x === exitPosition.x && y === exitPosition.y) {
+          cell.textContent = exitEmoji;
+        } else if (policePositions.some(pos => pos.x === x && pos.y === y)) {
+          cell.textContent = policeEmoji;
+        } else if (wallPositions.some(pos => pos.x === x && pos.y === y)) {
+          cell.classList.add("wall");
+          cell.textContent = wallEmoji;
+        } else if (firePositions.some(pos => pos.x === x && pos.y === y)) {
+          cell.classList.add("fire");
+          cell.textContent = fireEmoji;
+        }
+
+        gameBoard.appendChild(cell);
+      }
+    }
+  }
+
+  function handleKeydown(event) {
+    if (gameOver || isFrozen) return;
+
+    switch (event.key) {
+      case "ArrowUp": movePlayer(0, -1); break;
+      case "ArrowDown": movePlayer(0, 1); break;
+      case "ArrowLeft": movePlayer(-1, 0); break;
+      case "ArrowRight": movePlayer(1, 0); break;
+    }
+    movePolice();
+    createBoard();
+    checkGameStatus();
+  }
+
+  function movePlayer(dx, dy) {
+    const newX = playerPosition.x + dx;
+    const newY = playerPosition.y + dy;
+    if (isValidMove(newX, newY)) {
+      playerPosition = { x: newX, y: newY };
+    }
+  }
+
+  function movePolice() {
+    policePositions = policePositions.map(pos => {
+      const dx = playerPosition.x > pos.x ? 1 : playerPosition.x < pos.x ? -1 : 0;
+      const dy = playerPosition.y > pos.y ? 1 : playerPosition.y < pos.y ? -1 : 0;
+
+      // Schiet een "bullet" als de politie in dezelfde rij of kolom is en er geen actieve bullet of cooldown is
+      if (Math.random() < 0.2 && !bulletActive && !bulletCooldown && (dx === 0 || dy === 0)) {
+        shootBullet(pos, dx, dy);
+      }
+
+      // Beweeg politie naar speler als de weg vrij is
+      return isValidMove(pos.x + dx, pos.y + dy) ? { x: pos.x + dx, y: pos.y + dy } : pos;
+    });
+  }
+
+  function shootBullet(policePos, dx, dy) {
+    bulletActive = true;
+    bulletCooldown = true;
+    let bulletPos = { x: policePos.x, y: policePos.y };
+    let steps = 0; // Teller voor het aantal stappen van de bullet
+
+    const interval = setInterval(() => {
+      bulletPos.x += dx;
+      bulletPos.y += dy;
+      steps++;
+
+      if (bulletPos.x === playerPosition.x && bulletPos.y === playerPosition.y) {
+        freezePlayer();
+        clearInterval(interval);
+      }
+
+      if (!isValidMove(bulletPos.x, bulletPos.y) || steps >= 5) { 
+        bulletActive = false; // Bullet is niet langer actief
+        clearInterval(interval); // Stopt de bullet na 5 stappen
+      }
+    }, 100);
+
+    // Start een cooldown van 4 seconden na het afvuren van een bullet
+    setTimeout(() => {
+      bulletCooldown = false;
+    }, 4000);
+  }
+
+  function freezePlayer() {
+    isFrozen = true;
+    setTimeout(() => { isFrozen = false; }, 2000); // 2 seconden
+  }
+
+  function checkGameStatus() {
+    // Check of de speler de uitgang heeft bereikt
+    if (playerPosition.x === exitPosition.x && playerPosition.y === exitPosition.y) {
+      document.getElementById("status").textContent = "Gefeliciteerd! Je bent ontsnapt!";
+      document.removeEventListener("keydown", handleKeydown);
+      gameOver = true;
+    }
+    // Check of de politie de speler heeft geraakt
+    else if (policePositions.some(pos => pos.x === playerPosition.x && pos.y === playerPosition.y)) {
+      document.getElementById("status").textContent = "Je bent gepakt door de politie!";
+      document.getElementById("retryButton").style.display = "block";
+      document.removeEventListener("keydown", handleKeydown);
+      gameOver = true;
+    }
+    // Check of de speler in het vuur staat
+    else if (firePositions.some(pos => pos.x === playerPosition.x && pos.y === playerPosition.y)) {
+      document.getElementById("status").textContent = "Je bent verbrand! Game Over!";
+      document.getElementById("retryButton").style.display = "block";
+      document.removeEventListener("keydown", handleKeydown);
+      gameOver = true;
+    }
+  }
+
+  function isValidMove(x, y) {
+    return x >= 0 && x < boardSize && y >= 0 && y < boardSize && !wallPositions.some(pos => pos.x === x && pos.y === y);
+  }
+
+  function generateWalls() {
+    const walls = [];
+    for (let i = 0; i < boardSize; i++) {
+      let wallPos;
+      do {
+        wallPos = { x: Math.floor(Math.random() * boardSize), y: Math.floor(Math.random() * boardSize) };
+      } while ((wallPos.x === 0 && wallPos.y === 0) || (wallPos.x === boardSize - 1 && wallPos.y === boardSize - 1) || walls.some(w => w.x === wallPos.x && w.y === wallPos.y));
+      walls.push(wallPos);
+    }
+    return walls;
+  }
+
+  function spawnPolice() {
+    const police = [];
+    for (let i = 0; i < 2; i++) {
+      let policePos;
+      do {
+        policePos = { x: Math.floor(Math.random() * boardSize), y: Math.floor(Math.random() * boardSize) };
+      } while ((policePos.x === 0 && policePos.y === 0) || police.some(p => p.x === policePos.x && p.y === policePos.y));
+      police.push(policePos);
+    }
+    return police;
+  }
+
+  // Start de timer voor het vuur dat na 5 minuten uitbreekt
+  function startFireTimer() {
+    setTimeout(() => {
+      if (!gameOver) {
+        triggerFire();
+      }
+    }, 300000); // 300.000 ms = 5 minuten
+  }
+
+  function triggerFire() {
+    firePositions = [];
+    for (let i = 0; i < 5; i++) {
+      const randomX = Math.floor(Math.random() * boardSize);
+      const randomY = Math.floor(Math.random() * boardSize);
+      firePositions.push({ x: randomX, y: randomY });
+    }
+
+    setTimeout(() => {
+      firePositions = [];
+      createBoard();
+    }, 5000); // Vuur duurt 5 seconden
+
+    createBoard();
+  }
+
+  resetGame(); // Start het spel wanneer de pagina laadt
+</script>
+
+</body>
+</html>
